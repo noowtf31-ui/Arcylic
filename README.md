@@ -2,14 +2,14 @@
 A modern, feature-rich Roblox UI library with acrylic blur effects, smooth animations, and comprehensive functionality.
 
 ## Highlights
-- 🎨 **Modern Design** - Acrylic blur backdrop with smooth animations
-- 📱 **Mobile Support** - Built-in mobile toggle button for touch devices
-- 🎯 **Drag & Resize** - Fully draggable window with smart resizing
-- 🔔 **Notifications** - Beautiful notification system with icons and timers
-- 🎨 **Components** - Button, Toggle, Slider, Dropdown, Keybind, ColorPicker, Paragraph
-- ⚙️ **Customizable** - Theme colors, sizes, fonts, and animation speeds
-- 🔑 **Keybind System** - Custom keybinds with listener support
-- 📦 **Sections & Tabs** - Organized layout with collapsible sections
+-  **Modern Design** - Acrylic blur backdrop with smooth animations
+-  **Mobile Support** - Built-in mobile toggle button for touch devices
+-  **Drag & Resize** - Fully draggable window with smart resizing
+-  **Notifications** - Beautiful notification system with icons and timers
+-  **Components** - Button, Toggle, Slider, Dropdown, Keybind, ColorPicker, Paragraph
+-  **Customizable** - Theme colors, sizes, fonts, and animation speeds
+-  **Keybind System** - Custom keybinds with listener support
+-  **Sections & Tabs** - Organized layout with collapsible sections
 
 ## Installation
 
@@ -557,3 +557,4 @@ MIT License - Feel free to use and modify for your projects.
 
 ## Credits
 Developed with modern design patterns and smooth user experience in mind.
+
