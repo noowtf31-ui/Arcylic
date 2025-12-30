@@ -13,6 +13,7 @@ local c = {
     Border = Color3.fromRGB(39, 39, 39),
     Text = Color3.fromRGB(255, 255, 255),
     TextDark = Color3.fromRGB(93, 93, 93),
+    TextFade = Color3.fromRGB(9, 9, 9),
     Accent = Color3.fromRGB(255, 255, 255),
     Toggle = {
         Enabled = Color3.fromRGB(255, 255, 255),
@@ -194,7 +195,7 @@ function AcrylicBlur.new(object)
         _folder = nil,
         _root = nil,
         _frame = nil,
-        _blur = nil
+        _dof = nil
     }, AcrylicBlur)
     self:_Initialize()
     return self
@@ -209,20 +210,17 @@ function AcrylicBlur:_CreateDepthOfField()
     if existingBlur then
         existingBlur:Destroy()
     end
+    
     local dof = CreateInstance("DepthOfFieldEffect", {
         Name = "AcrylicBlur",
         FarIntensity = 0,
-        FocusDistance = 0.01,
-        InFocusRadius = 0.01,
-        NearIntensity = 1,
+        FocusDistance = 0.05,
+        InFocusRadius = 0.1,
+        NearIntensity = 0.5, 
         Parent = lg
     })
-    self._blur = CreateInstance("BlurEffect", {
-        Name = "AcrylicBlurEffect",
-        Size = 6,
-        Enabled = true,
-        Parent = lg
-    })
+    
+    self._dof = dof
     return dof
 end
 
@@ -248,7 +246,7 @@ function AcrylicBlur:_CreateRoot()
         CanQuery = false,
         Locked = true,
         CastShadow = false,
-        Transparency = 0.9,
+        Transparency = 0.95, 
         Parent = self._folder
     })
     CreateInstance("SpecialMesh", {
@@ -269,7 +267,7 @@ function AcrylicBlur:_CreateFrame()
 end
 
 function AcrylicBlur:_Render(distance)
-    distance = distance or 0.0005
+    distance = distance or 0.001
     local positions = {
         top_left = Vector2.new(),
         top_right = Vector2.new(),
@@ -330,7 +328,7 @@ function AcrylicBlur:_Initialize()
     self:_CreateFolder()
     self:_CreateRoot()
     self:_CreateFrame()
-    self:_Render(0.0005)
+    self:_Render(0.001)
 end
 
 function AcrylicBlur:Destroy()
@@ -724,8 +722,6 @@ function Library:_SetupSmartResize(handle)
             local delta = input.Position - resizeStart
             local newWidth = math.clamp(startSize.X + delta.X, self._minSize.X, self._maxSize.X)
             local newHeight = math.clamp(startSize.Y + delta.Y, self._minSize.Y, self._maxSize.Y)
-            local widthDelta = newWidth - startSize.X
-            local heightDelta = newHeight - startSize.Y
             self.container.Size = UDim2.new(0, newWidth, 0, newHeight)
             self._originalHeight = newHeight
         end
@@ -902,6 +898,15 @@ function Library._CreateTab(section, name, icon)
         Parent = tabText
     })
 
+    local textGradient = CreateInstance("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, c.TextDark),
+            ColorSequenceKeypoint.new(0.65, c.TextDark),
+            ColorSequenceKeypoint.new(1, c.TextFade)
+        }),
+        Parent = tabText
+    })
+
     local clickBtn = CreateInstance("TextButton", {
         Name = "ClickButton",
         Text = "",
@@ -921,7 +926,7 @@ function Library._CreateTab(section, name, icon)
     CreateListLayout(tab.content, 8, Enum.SortOrder.LayoutOrder)
 
     clickBtn.MouseButton1Click:Connect(function()
-        Library._SelectTab(section._library, tab, tabBtn, tabStroke, iconLabel, tabText)
+        Library._SelectTab(section._library, tab, tabBtn, tabStroke, iconLabel, tabText, textGradient)
     end)
 
     clickBtn.MouseEnter:Connect(function()
@@ -940,11 +945,12 @@ function Library._CreateTab(section, name, icon)
     tab.stroke = tabStroke
     tab.icon = iconLabel
     tab.textLabel = tabText
+    tab.textGradient = textGradient
 
     table.insert(section.tabs, tab)
 
     if not section._library.currentTab then
-        Library._SelectTab(section._library, tab, tabBtn, tabStroke, iconLabel, tabText)
+        Library._SelectTab(section._library, tab, tabBtn, tabStroke, iconLabel, tabText, textGradient)
     end
 
     local tabMethods = setmetatable({}, {__index = tab})
@@ -984,20 +990,30 @@ function Library._CreateTab(section, name, icon)
     return tabMethods
 end
 
-function Library._SelectTab(lib, tab, btn, stroke, icon, textLabel)
+function Library._SelectTab(lib, tab, btn, stroke, icon, textLabel, textGradient)
+    
     if lib.currentTab then
         lib.currentTab.content.Visible = false
         CreateTween(lib.currentTab.button, {BackgroundTransparency = 1}, animationspeed.Fast)
-        CreateTween(lib.currentTab.textLabel, {TextColor3 = c.TextDark}, animationspeed.Fast)
         CreateTween(lib.currentTab.icon, {ImageColor3 = c.TextDark}, animationspeed.Fast)
         lib.currentTab.stroke.Transparency = 1
+        
+        if lib.currentTab.textGradient then
+            lib.currentTab.textGradient.Enabled = true
+        end
     end
+    
     lib.currentTab = tab
     tab.content.Visible = true
-    CreateTween(btn, {BackgroundTransparency = 0.4}, animationspeed.Fast)
-    CreateTween(textLabel, {TextColor3 = c.Text}, animationspeed.Fast)
+    
+    CreateTween(btn, {BackgroundTransparency = 1}, animationspeed.Fast)
     CreateTween(icon, {ImageColor3 = c.Text}, animationspeed.Fast)
-    stroke.Transparency = 0
+    stroke.Transparency = 1  
+    
+        if textGradient then
+        textGradient.Enabled = false
+    end
+    textLabel.TextColor3 = c.Text
 end
 
 function Library._CreateContentSection(tab, name)
