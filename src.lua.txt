@@ -4,6 +4,7 @@ local plr = game:GetService("Players")
 local lg = game:GetService("Lighting")
 local rs = game:GetService("RunService")
 local gs = game:GetService("GuiService")
+local hs = game:GetService("HttpService")
 
 local n = "Acrylic"
 
@@ -37,7 +38,8 @@ local s = {
     Dropdown = {Height = 39, OptionHeight = 30},
     Tab = {Width = 135, Height = 35},
     ColorPicker = {Width = 180, Height = 160},
-    Notification = {Width = 220, Height = 70}
+    Notification = {Width = 220, Height = 70},
+    TextBox = {Height = 39, InputWidth = 150}
 }
 
 local f = {
@@ -186,6 +188,31 @@ local function DisconnectAll()
     Connections = {}
 end
 
+local function GetConfigFolder(configName)
+    return "AcrylicConfigs/" .. configName
+end
+
+local function EnsureConfigFolder()
+    if isfolder and not isfolder("AcrylicConfigs") then
+        makefolder("AcrylicConfigs")
+    end
+end
+
+local function GetAvailableConfigs()
+    local configs = {}
+    if isfolder and listfiles then
+        EnsureConfigFolder()
+        local files = listfiles("AcrylicConfigs")
+        for _, file in ipairs(files) do
+            local name = file:match("AcrylicConfigs/(.+)%.json$") or file:match("AcrylicConfigs\\(.+)%.json$")
+            if name then
+                table.insert(configs, name)
+            end
+        end
+    end
+    return configs
+end
+
 local AcrylicBlur = {}
 AcrylicBlur.__index = AcrylicBlur
 
@@ -195,7 +222,8 @@ function AcrylicBlur.new(object)
         _folder = nil,
         _root = nil,
         _frame = nil,
-        _dof = nil
+        _dof = nil,
+        _enabled = true
     }, AcrylicBlur)
     self:_Initialize()
     return self
@@ -291,7 +319,7 @@ function AcrylicBlur:_Render(distance)
     end
 
     local function Update()
-        if not self._root then return end
+        if not self._root or not self._enabled then return end
         local tl = ViewportToWorld(positions.top_left, distance)
         local tr = ViewportToWorld(positions.top_right, distance)
         local br = ViewportToWorld(positions.bottom_right, distance)
@@ -307,6 +335,7 @@ function AcrylicBlur:_Render(distance)
     end
 
     local function OnChange()
+        if not self._enabled then return end
         local offset = GetOffset()
         local size = self._frame.AbsoluteSize - Vector2.new(offset, offset)
         local position = self._frame.AbsolutePosition + Vector2.new(offset / 2, offset / 2)
@@ -329,6 +358,16 @@ function AcrylicBlur:_Initialize()
     self:_CreateRoot()
     self:_CreateFrame()
     self:_Render(0.001)
+end
+
+function AcrylicBlur:SetEnabled(enabled)
+    self._enabled = enabled
+    if self._root then
+        self._root.Transparency = enabled and 0.95 or 1
+    end
+    if self._dof then
+        self._dof.Enabled = enabled
+    end
 end
 
 function AcrylicBlur:Destroy()
@@ -358,9 +397,10 @@ local function CreateNotificationContainer(screenGui)
     return NotificationContainer
 end
 
-function Library.new(title)
+function Library.new(title, configFolder)
     local self = setmetatable({}, Library)
     self.title = title or "Acrylic"
+    self.configFolder = configFolder or title or "Acrylic"
     self.sections = {}
     self.currentTab = nil
     self.minimized = false
@@ -372,6 +412,9 @@ function Library.new(title)
     self._minSize = Vector2.new(s.Minv0rtexd.Width, s.Minv0rtexd.Height)
     self._maxSize = Vector2.new(s.Maxv0rtexd.Width, s.Maxv0rtexd.Height)
     self._mobileToggle = nil
+    self._configElements = {}
+    self._autoSave = false
+    self._currentConfig = "default"
     self:_CreateMainv0rtexd()
     self:_SetupKeybindListener()
     self:_SetupMobileSupport()
@@ -470,7 +513,12 @@ end
 
 function Library:Toggle()
     self._visible = not self._visible
-    self.screenGui.Enabled = self._visible
+    self.container.Visible = self._visible
+    
+    if self._acrylicBlur then
+        self._acrylicBlur:SetEnabled(self._visible)
+    end
+    
     if self._mobileToggle then
         self._mobileToggle.Visible = not self._visible
     end
@@ -481,7 +529,6 @@ function Library:SetToggleKey(keyCode)
 end
 
 function Library:_SetupMobileSupport()
-    if not IsMobileDevice() then return end
     local mobileButton = CreateInstance("ImageButton", {
         Name = "MobileToggle",
         Image = "rbxassetid://112235310154264",
@@ -492,14 +539,52 @@ function Library:_SetupMobileSupport()
         Size = UDim2.new(0, 50, 0, 50),
         AnchorPoint = Vector2.new(0, 0.5),
         Visible = false,
+        ZIndex = 999,
         Parent = self.screenGui
     })
     CreateCorner(mobileButton, 25)
     CreateStroke(mobileButton)
-    mobileButton.MouseButton1Click:Connect(function()
-        self:Toggle()
+    
+    local dragging = false
+    local dragStart, startPos
+    
+    mobileButton.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = mobileButton.Position
+        end
     end)
+    
+    mobileButton.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if dragging then
+                local delta = input.Position - dragStart
+                if delta.Magnitude < 10 then
+                    self:Toggle()
+                end
+            end
+            dragging = false
+        end
+    end)
+    
+    ui.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            local delta = input.Position - dragStart
+            mobileButton.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    
     self._mobileToggle = mobileButton
+    
+    if IsMobileDevice() then
+        mobileButton.Visible = not self._visible
+    end
 end
 
 function Library:_CreateMainv0rtexd()
@@ -731,12 +816,18 @@ end
 function Library:_ToggleMinimize()
     self.minimized = not self.minimized
     if self.minimized then
+        if self._acrylicBlur then
+            self._acrylicBlur:SetEnabled(false)
+        end
         CreateTween(self.mainContent, {Size = UDim2.new(1, 0, 0, 0)}, animationspeed.Slow)
         CreateTween(self.container, {Size = UDim2.new(0, self.container.AbsoluteSize.X, 0, 45)}, animationspeed.Slow)
         if self.resizeBtn then
             self.resizeBtn.Visible = false
         end
     else
+        if self._acrylicBlur then
+            self._acrylicBlur:SetEnabled(true)
+        end
         CreateTween(self.container, {Size = UDim2.new(0, self.container.AbsoluteSize.X, 0, self._originalHeight)}, animationspeed.Slow)
         task.delay(0.1, function()
             CreateTween(self.mainContent, {Size = UDim2.new(1, 0, 1, -46)}, animationspeed.Normal)
@@ -748,12 +839,166 @@ function Library:_ToggleMinimize()
 end
 
 function Library:Destroy()
+    if self._autoSave then
+        self:SaveConfig(self._currentConfig)
+    end
+    
     DisconnectAll()
     if self._acrylicBlur then
         self._acrylicBlur:Destroy()
     end
     if self.screenGui then
         self.screenGui:Destroy()
+    end
+end
+
+
+function Library:_RegisterConfigElement(id, elementType, getValue, setValue)
+    self._configElements[id] = {
+        type = elementType,
+        getValue = getValue,
+        setValue = setValue
+    }
+end
+
+function Library:SaveConfig(configName)
+    if not writefile then
+        self:Notify({
+            Title = "Error",
+            Description = "Config system not supported",
+            Duration = 3
+        })
+        return false
+    end
+    
+    EnsureConfigFolder()
+    
+    local configData = {}
+    for id, element in pairs(self._configElements) do
+        local value = element.getValue()
+        
+        if typeof(value) == "Color3" then
+            value = {R = value.R, G = value.G, B = value.B, _type = "Color3"}
+        elseif typeof(value) == "EnumItem" then
+            value = {_type = "EnumItem", _enum = tostring(value.EnumType), _value = value.Name}
+        end
+        
+        configData[id] = value
+    end
+    
+    local success, err = pcall(function()
+        writefile("AcrylicConfigs/" .. configName .. ".json", hs:JSONEncode(configData))
+    end)
+    
+    if success then
+        self._currentConfig = configName
+        self:Notify({
+            Title = "Config Saved",
+            Description = "Saved as: " .. configName,
+            Duration = 2,
+            Icon = "rbxassetid://10723356507"
+        })
+        return true
+    else
+        self:Notify({
+            Title = "Error",
+            Description = "Failed to save config",
+            Duration = 3
+        })
+        return false
+    end
+end
+
+function Library:LoadConfig(configName)
+    if not readfile or not isfile then
+        self:Notify({
+            Title = "Error",
+            Description = "Config system not supported",
+            Duration = 3
+        })
+        return false
+    end
+    
+    local path = "AcrylicConfigs/" .. configName .. ".json"
+    if not isfile(path) then
+        self:Notify({
+            Title = "Error",
+            Description = "Config not found: " .. configName,
+            Duration = 3
+        })
+        return false
+    end
+    
+    local success, data = pcall(function()
+        return hs:JSONDecode(readfile(path))
+    end)
+    
+    if not success or not data then
+        self:Notify({
+            Title = "Error",
+            Description = "Failed to load config",
+            Duration = 3
+        })
+        return false
+    end
+    
+    for id, value in pairs(data) do
+        if self._configElements[id] then
+            if type(value) == "table" and value._type == "Color3" then
+                value = Color3.new(value.R, value.G, value.B)
+            elseif type(value) == "table" and value._type == "EnumItem" then
+                value = Enum[value._enum][value._value]
+            end
+            
+            pcall(function()
+                self._configElements[id].setValue(value)
+            end)
+        end
+    end
+    
+    self._currentConfig = configName
+    self:Notify({
+        Title = "Config Loaded",
+        Description = "Loaded: " .. configName,
+        Duration = 2,
+        Icon = "rbxassetid://10723356507"
+    })
+    return true
+end
+
+function Library:DeleteConfig(configName)
+    if not delfile or not isfile then
+        return false
+    end
+    
+    local path = "AcrylicConfigs/" .. configName .. ".json"
+    if isfile(path) then
+        delfile(path)
+        self:Notify({
+            Title = "Config Deleted",
+            Description = "Deleted: " .. configName,
+            Duration = 2
+        })
+        return true
+    end
+    return false
+end
+
+function Library:GetConfigs()
+    return GetAvailableConfigs()
+end
+
+function Library:SetAutoSave(enabled)
+    self._autoSave = enabled
+    if enabled then
+        task.spawn(function()
+            while self._autoSave and self.screenGui and self.screenGui.Parent do
+                task.wait(30)
+                if self._autoSave then
+                    self:SaveConfig(self._currentConfig)
+                end
+            end
+        end)
     end
 end
 
@@ -946,6 +1191,7 @@ function Library._CreateTab(section, name, icon)
     tab.icon = iconLabel
     tab.textLabel = tabText
     tab.textGradient = textGradient
+    tab._library = section._library
 
     table.insert(section.tabs, tab)
 
@@ -987,6 +1233,14 @@ function Library._CreateTab(section, name, icon)
         return Library._CreateColorPicker(self, config)
     end
 
+    function tabMethods:CreateTextBox(config)
+        return Library._CreateTextBox(self, config)
+    end
+
+    function tabMethods:CreateConfigSection()
+        return Library._CreateConfigSection(self)
+    end
+
     return tabMethods
 end
 
@@ -1010,7 +1264,7 @@ function Library._SelectTab(lib, tab, btn, stroke, icon, textLabel, textGradient
     CreateTween(icon, {ImageColor3 = c.Text}, animationspeed.Fast)
     stroke.Transparency = 1  
     
-        if textGradient then
+    if textGradient then
         textGradient.Enabled = false
     end
     textLabel.TextColor3 = c.Text
@@ -1091,6 +1345,7 @@ function Library._CreateSlider(tab, config)
     local max = config.Max or 100
     local default = config.Default or 50
     local callback = config.Callback or function() end
+    local flag = config.Flag
     local currentValue = default
 
     local frame = CreateInstance("Frame", {
@@ -1181,7 +1436,7 @@ function Library._CreateSlider(tab, config)
         end
     end)
 
-    return {
+    local methods = {
         SetValue = function(_, value)
             currentValue = math.clamp(value, min, max)
             local relativeX = (currentValue - min) / (max - min)
@@ -1193,6 +1448,15 @@ function Library._CreateSlider(tab, config)
             return currentValue
         end
     }
+
+    if flag and tab._library then
+        tab._library:_RegisterConfigElement(flag, "Slider", 
+            function() return currentValue end,
+            function(value) methods:SetValue(value) end
+        )
+    end
+
+    return methods
 end
 
 function Library._CreateButton(tab, config)
@@ -1262,6 +1526,7 @@ function Library._CreateToggle(tab, config)
     local name = config.Name or "Toggle"
     local default = config.Default or false
     local callback = config.Callback or function() end
+    local flag = config.Flag
     local enabled = default
 
     local frame = CreateInstance("Frame", {
@@ -1341,7 +1606,7 @@ function Library._CreateToggle(tab, config)
         callback(enabled)
     end)
 
-    return {
+    local methods = {
         SetValue = function(_, value)
             enabled = value
             UpdateToggle()
@@ -1351,6 +1616,15 @@ function Library._CreateToggle(tab, config)
             return enabled
         end
     }
+
+    if flag and tab._library then
+        tab._library:_RegisterConfigElement(flag, "Toggle", 
+            function() return enabled end,
+            function(value) methods:SetValue(value) end
+        )
+    end
+
+    return methods
 end
 
 function Library._CreateDropdown(tab, config)
@@ -1359,6 +1633,7 @@ function Library._CreateDropdown(tab, config)
     local default = config.Default or options[1]
     local multiSelect = config.MultiSelect or false
     local callback = config.Callback or function() end
+    local flag = config.Flag
     local selected = multiSelect and {} or default
     local expanded = false
 
@@ -1541,7 +1816,7 @@ function Library._CreateDropdown(tab, config)
         frame.ZIndex = expanded and 10 or 1
     end)
 
-    return {
+    local methods = {
         SetValue = function(_, value)
             if multiSelect and type(value) == "table" then
                 selected = value
@@ -1569,12 +1844,22 @@ function Library._CreateDropdown(tab, config)
             optionsContainer.Size = UDim2.new(0, 135, 0, newTotalHeight)
         end
     }
+
+    if flag and tab._library then
+        tab._library:_RegisterConfigElement(flag, "Dropdown", 
+            function() return selected end,
+            function(value) methods:SetValue(value) end
+        )
+    end
+
+    return methods
 end
 
 function Library._CreateKeybind(tab, config, lib)
     local name = config.Name or "Keybind"
     local default = config.Default or Enum.KeyCode.F
     local callback = config.Callback or function() end
+    local flag = config.Flag
     local currentKey = default
     local listening = false
 
@@ -1671,7 +1956,7 @@ function Library._CreateKeybind(tab, config, lib)
     table.insert(Connections, inputConnection)
     UpdateKeyDisplay()
 
-    return {
+    local methods = {
         SetKey = function(_, keyCode)
             currentKey = keyCode
             lib._keybinds[keybindId].key = currentKey
@@ -1681,12 +1966,22 @@ function Library._CreateKeybind(tab, config, lib)
             return currentKey
         end
     }
+
+    if flag and lib then
+        lib:_RegisterConfigElement(flag, "Keybind", 
+            function() return currentKey end,
+            function(value) methods:SetKey(value) end
+        )
+    end
+
+    return methods
 end
 
 function Library._CreateColorPicker(tab, config)
     local name = config.Name or "Color Picker"
     local default = config.Default or Color3.fromRGB(255, 255, 255)
     local callback = config.Callback or function() end
+    local flag = config.Flag
     local currentColor = default
     local hue, sat, val = currentColor:ToHSV()
     local expanded = false
@@ -1947,11 +2242,245 @@ function Library._CreateColorPicker(tab, config)
         end
     end)
 
-    return {
+    local methods = {
         SetColor = function(_, color)
             currentColor = color
             hue, sat, val = color:ToHSV()
             UpdateColor()
+        end,
+        GetColor = function()
+            return currentColor
+        end
+    }
+
+    if flag and tab._library then
+        tab._library:_RegisterConfigElement(flag, "ColorPicker", 
+            function() return currentColor end,
+            function(value) methods:SetColor(value) end
+        )
+    end
+
+    return methods
+end
+
+function Library._CreateTextBox(tab, config)
+    local name = config.Name or "TextBox"
+    local default = config.Default or ""
+    local placeholder = config.Placeholder or "Enter text..."
+    local callback = config.Callback or function() end
+    local clearOnFocus = config.ClearOnFocus or false
+    local numbersOnly = config.NumbersOnly or false
+    local flag = config.Flag
+    local currentText = default
+
+    local frame = CreateInstance("Frame", {
+        Name = "TextBox_" .. name,
+        BackgroundColor3 = c.Secondary,
+        BackgroundTransparency = 0.4,
+        BorderSizePixel = 0,
+        Size = UDim2.new(1, 0, 0, s.TextBox.Height),
+        Parent = tab.content
+    })
+    CreateCorner(frame, 5)
+    CreateStroke(frame)
+
+    local nameLabel = CreateInstance("TextLabel", {
+        Name = "Name",
+        FontFace = f.Regular,
+        TextColor3 = c.Text,
+        Text = name,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 10, 0.5, -10),
+        TextSize = textsize.Normal,
+        Size = UDim2.new(0, 150, 0, 20),
+        Parent = frame
+    })
+
+    local icon = CreateInstance("ImageLabel", {
+        Name = "Icon",
+        BackgroundTransparency = 1,
+        Image = "rbxassetid://93828793199781",
+        ImageColor3 = c.TextDark,
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -165, 0.5, 0),
+        Size = UDim2.new(0, 18, 0, 18),
+        Parent = frame
+    })
+
+    local textBoxContainer = CreateInstance("Frame", {
+        Name = "TextBoxContainer",
+        BackgroundColor3 = c.Secondary,
+        BackgroundTransparency = 0.04,
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -10, 0.5, 0),
+        BorderSizePixel = 0,
+        Size = UDim2.new(0, s.TextBox.InputWidth, 0, 26),
+        Parent = frame
+    })
+    CreateCorner(textBoxContainer, 5)
+    local textBoxStroke = CreateStroke(textBoxContainer)
+
+    local textBox = CreateInstance("TextBox", {
+        Name = "Input",
+        FontFace = f.Regular,
+        TextColor3 = c.Text,
+        PlaceholderText = placeholder,
+        PlaceholderColor3 = c.TextDark,
+        Text = currentText,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        BackgroundTransparency = 1,
+        TextSize = textsize.Small,
+        Size = UDim2.new(1, -16, 1, 0),
+        Position = UDim2.new(0, 8, 0, 0),
+        ClearTextOnFocus = clearOnFocus,
+        Parent = textBoxContainer
+    })
+
+    textBox.Focused:Connect(function()
+        CreateTween(textBoxContainer, {BackgroundTransparency = 0}, animationspeed.Fast)
+        CreateTween(textBoxStroke, {Color = c.Accent}, animationspeed.Fast)
+        CreateTween(icon, {ImageColor3 = c.Text}, animationspeed.Fast)
+    end)
+
+    textBox.FocusLost:Connect(function(enterPressed)
+        CreateTween(textBoxContainer, {BackgroundTransparency = 0.04}, animationspeed.Fast)
+        CreateTween(textBoxStroke, {Color = c.Border}, animationspeed.Fast)
+        CreateTween(icon, {ImageColor3 = c.TextDark}, animationspeed.Fast)
+        
+        if numbersOnly then
+            local numValue = tonumber(textBox.Text)
+            if numValue then
+                currentText = tostring(numValue)
+                textBox.Text = currentText
+            else
+                textBox.Text = currentText
+            end
+        else
+            currentText = textBox.Text
+        end
+        
+        callback(currentText, enterPressed)
+    end)
+
+    if numbersOnly then
+        textBox:GetPropertyChangedSignal("Text"):Connect(function()
+            local text = textBox.Text
+            local filtered = text:gsub("[^%d%.%-]", "")
+            if text ~= filtered then
+                textBox.Text = filtered
+            end
+        end)
+    end
+
+    local methods = {
+        SetText = function(_, text)
+            currentText = tostring(text)
+            textBox.Text = currentText
+        end,
+        GetText = function()
+            return currentText
+        end,
+        SetPlaceholder = function(_, newPlaceholder)
+            textBox.PlaceholderText = newPlaceholder
+        end,
+        Focus = function()
+            textBox:CaptureFocus()
+        end
+    }
+
+    if flag and tab._library then
+        tab._library:_RegisterConfigElement(flag, "TextBox", 
+            function() return currentText end,
+            function(value) methods:SetText(value) end
+        )
+    end
+
+    return methods
+end
+
+function Library._CreateConfigSection(tab)
+    local lib = tab._library
+    
+    Library._CreateContentSection(tab, "Configuration")
+
+    local configNameBox = Library._CreateTextBox(tab, {
+        Name = "Config Name",
+        Default = "default",
+        Placeholder = "Enter config name...",
+        Callback = function(text)
+            lib._currentConfig = text
+        end
+    })
+
+    local configDropdown
+    configDropdown = Library._CreateDropdown(tab, {
+        Name = "Select Config",
+        Options = lib:GetConfigs(),
+        Default = "default",
+        Callback = function(selected)
+            configNameBox:SetText(selected)
+            lib._currentConfig = selected
+        end
+    })
+
+    Library._CreateButton(tab, {
+        Name = "Save Config",
+        Callback = function()
+            local configName = configNameBox:GetText()
+            if configName and configName ~= "" then
+                lib:SaveConfig(configName)
+                configDropdown:Refresh(lib:GetConfigs())
+            end
+        end
+    })
+
+    Library._CreateButton(tab, {
+        Name = "Load Config",
+        Callback = function()
+            local configName = configNameBox:GetText()
+            if configName and configName ~= "" then
+                lib:LoadConfig(configName)
+            end
+        end
+    })
+
+    Library._CreateButton(tab, {
+        Name = "Delete Config",
+        Callback = function()
+            local configName = configNameBox:GetText()
+            if configName and configName ~= "" then
+                lib:DeleteConfig(configName)
+                configDropdown:Refresh(lib:GetConfigs())
+            end
+        end
+    })
+
+    Library._CreateButton(tab, {
+        Name = "Refresh Configs",
+        Callback = function()
+            configDropdown:Refresh(lib:GetConfigs())
+            lib:Notify({
+                Title = "Configs Refreshed",
+                Description = "Config list updated",
+                Duration = 2,
+                Icon = "rbxassetid://10723356507"
+            })
+        end
+    })
+
+    Library._CreateToggle(tab, {
+        Name = "Auto Save",
+        Default = false,
+        Callback = function(enabled)
+            lib:SetAutoSave(enabled)
+        end
+    })
+
+    return {
+        RefreshConfigs = function()
+            configDropdown:Refresh(lib:GetConfigs())
         end
     }
 end
